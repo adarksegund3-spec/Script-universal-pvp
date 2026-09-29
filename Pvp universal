@@ -168,8 +168,7 @@ local function detectGameAPI()
     local attrA = analyzeMethod("Attribute")
     local svA   = analyzeMethod("StringValue")
 
-    local chosen = nil
-    local analysis = nil
+    local chosen, analysis
     if teamA.validTeams >= 2 then chosen = "Team"; analysis = teamA
     elseif attrA.validTeams >= 2 then chosen = "Attribute"; analysis = attrA
     elseif svA.validTeams >= 2 then chosen = "StringValue"; analysis = svA end
@@ -201,7 +200,7 @@ local Config = {
 
     AimbotEnabled = false,
     AimbotShowFOV = true,
-    AimbotFOV = 150,
+    AimbotFOV = 30,
     AimbotFOVAlpha = 0.6,
     AimbotPart = "Head",
     AimbotTeamCheck = false,
@@ -254,10 +253,21 @@ local function refreshFov()
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- ESP — Sistema com sincronização imediata
+-- ESP — Sistema com signature (rebuild total quando muda)
 -- ═══════════════════════════════════════════════════════════════
 local HL_TAG = "AKZ_ESP_HL"
 local BB_TAG = "AKZ_ESP_BB"
+
+-- Assinatura do estado atual do ESP. Se mudar, força rebuild total.
+local espSignature = ""
+local function calcularSignature()
+    return tostring(Config.ESPEnabled) .. "|" ..
+           tostring(Config.ESP_Highlight) .. "|" ..
+           tostring(Config.ESP_Name) .. "|" ..
+           tostring(Config.ESP_Distance) .. "|" ..
+           tostring(Config.ESP_Color) .. "|" ..
+           tostring(Config.ESPTeamCheck)
+end
 
 local function limparESP(player)
     local char = player.Character
@@ -270,11 +280,7 @@ local function limparTudoESP()
     for _, p in ipairs(Players:GetPlayers()) do limparESP(p) end
 end
 
--- Essa função SEMPRE:
---   • cria o que deveria existir e não existe
---   • destrói o que existe e não deveria
---   • atualiza o que existe
--- Roda a cada frame e no callback de cada toggle
+-- Cria/atualiza os elementos do ESP de UM player
 local function sincronizarESP(player)
     if player == LocalPlayer then return end
 
@@ -285,7 +291,7 @@ local function sincronizarESP(player)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then limparESP(player); return end
 
-    -- Condições globais que forçam limpeza total
+    -- Não deve mostrar ESP
     if not Config.ESPEnabled then limparESP(player); return end
     if Config.ESPTeamCheck and GameAPI.hasTeams and isAlly(player) then
         limparESP(player); return
@@ -295,7 +301,7 @@ local function sincronizarESP(player)
     if Config.ESP_Color then color = getPlayerColor(player)
     else color = Color3.fromRGB(220,40,40) end
 
-    -- ───────────── HIGHLIGHT ─────────────
+    -- ───── HIGHLIGHT ─────
     local hl = char:FindFirstChild(HL_TAG)
     if Config.ESP_Highlight then
         if not hl then
@@ -313,7 +319,7 @@ local function sincronizarESP(player)
         hl:Destroy()
     end
 
-    -- ───────────── NOME / DISTÂNCIA ─────────────
+    -- ───── NOME / DISTÂNCIA ─────
     local bb = char:FindFirstChild(BB_TAG)
     local querBB = Config.ESP_Name or Config.ESP_Distance
 
@@ -349,7 +355,6 @@ local function sincronizarESP(player)
             bb.Lbl.TextColor3 = color
         end
     elseif bb then
-        -- Não quer mais BB? Destrói imediatamente
         bb:Destroy()
     end
 end
@@ -358,6 +363,18 @@ local function sincronizarTodosESP()
     for _, p in ipairs(Players:GetPlayers()) do
         sincronizarESP(p)
     end
+end
+
+-- Chama isso SEMPRE que um toggle do ESP mudar.
+-- Detecta mudança pela signature e força rebuild total.
+local function aplicarMudancaESP()
+    local sig = calcularSignature()
+    if sig ~= espSignature then
+        espSignature = sig
+        -- Mudou alguma config? Destrói tudo e deixa o próximo sync recriar.
+        limparTudoESP()
+    end
+    sincronizarTodosESP()
 end
 
 -- ═══════════════════════════════════════════════════════════════
@@ -616,6 +633,7 @@ espTab:Button({
         local ok, msg = detectGameAPI()
         apiStatusParagraph:SetTitle("✓ " .. msg)
         WindUI:Notify({ Title = "API", Content = msg, Duration = 4 })
+        aplicarMudancaESP()
     end,
 })
 
@@ -627,7 +645,7 @@ espTab:Toggle({
     Value = false,
     Callback = function(v)
         Config.ESPEnabled = v
-        sincronizarTodosESP() -- ← aplica imediatamente
+        aplicarMudancaESP()
     end,
 })
 
@@ -636,7 +654,7 @@ espTab:Toggle({
     Value = false,
     Callback = function(v)
         Config.ESPTeamCheck = v
-        sincronizarTodosESP()
+        aplicarMudancaESP()
     end,
 })
 
@@ -647,7 +665,7 @@ espTab:Toggle({
     Value = false,
     Callback = function(v)
         Config.ESP_Highlight = v
-        sincronizarTodosESP() -- ← cria/destrói na hora
+        aplicarMudancaESP()
     end,
 })
 
@@ -656,7 +674,7 @@ espTab:Toggle({
     Value = false,
     Callback = function(v)
         Config.ESP_Name = v
-        sincronizarTodosESP()
+        aplicarMudancaESP()
     end,
 })
 
@@ -665,7 +683,7 @@ espTab:Toggle({
     Value = false,
     Callback = function(v)
         Config.ESP_Distance = v
-        sincronizarTodosESP() -- ← aqui era o bug: agora atualiza imediato
+        aplicarMudancaESP()
     end,
 })
 
@@ -674,7 +692,7 @@ espTab:Toggle({
     Value = false,
     Callback = function(v)
         Config.ESP_Color = v
-        sincronizarTodosESP()
+        aplicarMudancaESP()
     end,
 })
 
@@ -731,8 +749,8 @@ aimTab:Section({ Title = "FOV", Opened = false })
 
 aimTab:Slider({
     Title = "Tamanho",
-    Step = 5,
-    Value = { Min = 40, Max = 500, Default = 150 },
+    Step = 1,
+    Value = { Min = 0, Max = 100, Default = 30 },
     Callback = function(v) Config.AimbotFOV = v; refreshFov() end,
 })
 
@@ -813,7 +831,7 @@ armTab:Toggle({ Title = "No Spread", Value = false, Callback = function(v) Confi
 -- LOOP PRINCIPAL
 -- ═══════════════════════════════════════════════════════════════
 RunService.RenderStepped:Connect(function(dt)
-    -- FOV
+    -- FOV circle
     local showFov = Config.AimbotEnabled and Config.AimbotShowFOV
     if showFov then
         fovCircle.Visible = true
@@ -823,7 +841,7 @@ RunService.RenderStepped:Connect(function(dt)
         fovCircle.Visible = false
     end
 
-    -- ESP — sincroniza TODOS a cada frame (garante estado correto)
+    -- ESP — sincroniza tudo a cada frame
     sincronizarTodosESP()
 
     -- Aimbot
